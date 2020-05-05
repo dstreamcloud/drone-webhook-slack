@@ -1,61 +1,46 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io/ioutil"
 	"net/http"
+	"os"
 
 	"github.com/drone/drone-go/plugin/webhook"
+	"github.com/dstreamcloud/drone-webhook-slack/plugin"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/sirupsen/logrus"
 )
 
 type Config struct {
-	Secret string `envconfig:"DRONE_YAML_SECRET"`
-	Addr   string `envconfig:"DRONE_PLUGIN_ADDR"`
-}
-
-type plugin struct {
-	url string
-}
-
-func (p *plugin) Deliver(ctx context.Context, req *webhook.Request) error {
-	if req.Event == webhook.EventBuild && req.Action == "completed" {
-		buf := bytes.NewBuffer(nil)
-		json.NewEncoder(buf).Encode(map[string]interface{}{
-			"blocks": []map[string]interface{}{{
-				"type": "section",
-				"text": map[string]interface{}{
-					"type": "mrkdwn",
-					"text": fmt.Sprintf("%s/%s [Build %d](%s) %s", req.Repo.Namespace, req.Repo.Name, req.Build.ID, req.Build.Link, req.Build.Status),
-				},
-			}},
-		})
-		res, err := http.Post(p.url, "application/json", buf)
-		if err != nil {
-			return err
-		}
-		defer res.Body.Close()
-		if res.StatusCode/100 != 2 {
-			body, err := ioutil.ReadAll(res.Body)
-			if err != nil {
-				return err
-			}
-			return errors.New(string(body))
-		}
-	}
-	return nil
+	Secret   string `envconfig:"DRONE_YAML_SECRET"`
+	Addr     string `envconfig:"DRONE_PLUGIN_ADDR"`
+	SlackURL string `envconfig:"DRONE_PLUGIN_SLACK_URL"`
 }
 
 func main() {
 	cfg := &Config{}
 	envconfig.MustProcess("", cfg)
-	p := &plugin{}
-	handler := webhook.Handler(p, cfg.Secret, logrus.StandardLogger())
+	p := plugin.New(cfg.SlackURL)
+	var handler http.Handler
+	if os.Getenv("IS_DEVELOPMENT") == "1" {
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			req := &webhook.Request{}
+			if err := json.NewDecoder(r.Body).Decode(req); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			err := p.Deliver(r.Context(), req)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			w.Write(nil)
+		})
+	} else {
+		handler = webhook.Handler(p, cfg.Secret, logrus.StandardLogger())
+	}
 	http.Handle("/", handler)
 	logrus.Fatal(http.ListenAndServe(cfg.Addr, nil))
 }
