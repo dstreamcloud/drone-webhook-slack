@@ -12,7 +12,7 @@ import (
 )
 
 type Config struct {
-	Secret   string `envconfig:"DRONE_YAML_SECRET"`
+	Secret   string `envconfig:"DRONE_WEBHOOK_SECRET"`
 	Addr     string `envconfig:"DRONE_PLUGIN_ADDR"`
 	SlackURL string `envconfig:"DRONE_PLUGIN_SLACK_URL"`
 }
